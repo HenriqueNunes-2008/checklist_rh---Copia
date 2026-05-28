@@ -3,6 +3,9 @@ from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, abort
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Importando a lógica do novo arquivo de PDF
 from pdf_generator import criar_pdf_buffer
@@ -48,6 +51,7 @@ class ChecklistModelo(db.Model):
     tipo = db.Column(db.String(50))  # admissao / desligamento
     nome_checklist = db.Column(db.String(100))
     excluido = db.Column(db.Boolean, default=False)
+    responsavel = db.Column(db.String(50), default='RH') # Define quem valida: 'RH' ou 'Administrativo'
 
 class ChecklistResposta(db.Model):
     __tablename__ = 'checklist_respostas'
@@ -57,7 +61,7 @@ class ChecklistResposta(db.Model):
     validado_rh = db.Column(db.Boolean, default=False)
     validado_executivo = db.Column(db.Boolean, default=False)
     # Relacionamento para facilitar acesso ao modelo
-    item_modelo = db.relationship('ChecklistModelo')
+    checklist_modelos = db.relationship('ChecklistModelo')
 
 # --- ROTAS DE AUTENTICAÇÃO ---
 
@@ -105,8 +109,6 @@ def realizar_cadastro():
 def realizar_login():
     email = request.form.get('email')
     senha = request.form.get('senha')
-    email = request.form.get('email')
-    senha = request.form.get('senha')
     user = Usuario.query.filter_by(email=email).first()
     
     if user and check_password_hash(user.senha, senha):
@@ -143,14 +145,21 @@ def dashboard():
         modelos_admissao = sorted(list(set(item.nome_checklist for item in itens_master if item.tipo == 'admissao')))
         modelos_desligamento = sorted(list(set(item.nome_checklist for item in itens_master if item.tipo == 'desligamento')))
 
-        # Converte objetos SQLAlchemy para listas de dicionários se os templates esperarem dicionários
-        # ou ajuste os templates para acessar objeto.atributo
+        # Converte objetos SQLAlchemy para dicionários para permitir serialização JSON no template
+        itens_master_json = [
+            {
+                "descricao": item.descricao,
+                "tipo": item.tipo,
+                "nome_checklist": item.nome_checklist,
+                "responsavel": item.responsavel
+            } for item in itens_master
+        ]
 
         if session['user_role'] == 'RH':
             return render_template('dashboard_rh.html', 
                                    nome=session['user_nome'], 
                                    funcionarios=funcionarios,
-                                   itens_master=itens_master,
+                                   itens_master=itens_master_json,
                                    modelos_admissao=modelos_admissao,
                                    modelos_desligamento=modelos_desligamento)
         else:
@@ -205,13 +214,19 @@ def cadastrar_item_checklist_massa():
     if session.get('user_role') != 'RH': return redirect(url_for('index'))
     
     descricoes = request.form.getlist('descricao[]')
+    responsaveis = request.form.getlist('responsavel[]')
     tipo_global = request.form.get('tipo_global')
     nome_checklist = request.form.get('nome_checklist') # Novo campo solicitado
     
     try:
-        for d in descricoes:
-            if d.strip(): 
-                novo_item = ChecklistModelo(descricao=d, tipo=tipo_global, nome_checklist=nome_checklist)
+        for d, r in zip(descricoes, responsaveis):
+            if d.strip():
+                novo_item = ChecklistModelo(
+                    descricao=d, 
+                    tipo=tipo_global, 
+                    nome_checklist=nome_checklist,
+                    responsavel=r
+                )
                 db.session.add(novo_item)
         
         db.session.commit()
@@ -232,16 +247,23 @@ def tela_validacao(id_funcionario):
 
     try:
         funcionario = Funcionario.query.get_or_404(id_funcionario)
-        # As respostas são carregadas via o relationship 'respostas' definido no model
+        user_role = str(session.get('user_role', '')).strip()
+
+        # Lógica de visibilidade: Administrativo só vê o que lhe cabe. RH vê tudo.
+        if user_role == 'RH':
+            checklists = funcionario.respostas
+        else:
+            # Filtra apenas itens onde o responsável definido no modelo é 'Administrativo'
+            checklists = [r for r in funcionario.respostas if r.checklist_modelos.responsavel == 'Administrativo']
         
-        return render_template('validar_checklist.html', funcionario=funcionario, checklists=funcionario.respostas)
+        return render_template('validar_checklist.html', funcionario=funcionario, checklists=checklists)
     except Exception as e:
         flash(f"Erro ao carregar checklist: {str(e)}", "danger")
         return redirect(url_for('dashboard'))
 
 @app.route('/salvar_checklist/<id_funcionario>', methods=['POST'])
 def salvar_checklist(id_funcionario):
-    user_role = str(session.get('user_role', '')).upper()
+    user_role = str(session.get('user_role', '')).upper().strip()
     
     # Verifica se o checklist já está encerrado
     funcionario = Funcionario.query.get_or_404(id_funcionario)
@@ -251,6 +273,10 @@ def salvar_checklist(id_funcionario):
     
     try:
         for r in funcionario.respostas:
+            # Trava de segurança: Se não for RH e o item não for de responsabilidade do Administrativo, ignora
+            if user_role != 'RH' and r.checklist_modelos.responsavel != 'Administrativo':
+                continue
+
             id_res = r.id
             
             if user_role == 'RH':
@@ -329,7 +355,7 @@ def gerar_pdf(id_funcionario, tipo):
         # Filtra as respostas pelo tipo de modelo associado
         respostas_filtradas = [
             r for r in funcionario.respostas 
-            if r.item_modelo.tipo == tipo
+            if r.checklist_modelos.tipo == tipo
         ]
 
         # Mapeamento para o formato esperado pelo gerador de PDF (compatibilidade)
@@ -340,7 +366,7 @@ def gerar_pdf(id_funcionario, tipo):
         check_data = []
         for r in respostas_filtradas:
             check_data.append({
-                "checklist_modelos": {"descricao": r.item_modelo.descricao},
+                "checklist_modelos": {"descricao": r.checklist_modelos.descricao},
                 "validado_rh": r.validado_rh,
                 "validado_executivo": r.validado_executivo
             })

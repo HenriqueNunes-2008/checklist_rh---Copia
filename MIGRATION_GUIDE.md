@@ -8,6 +8,7 @@ A aplicação agora utiliza o **SQLAlchemy** como ORM. Isso elimina a dependênc
 
 ### Estrutura de Classes (Models)
 As tabelas foram migradas para o arquivo `app.py` sob as classes `Usuario`, `Funcionario`, `ChecklistModelo` e `ChecklistResposta`.
+A tabela `ChecklistModelo` agora conta com o campo `responsavel`, permitindo a segregação de tarefas entre RH e Administrativo.
 
 ### Vantagens:
 - Consultas mais rápidas e tipadas.
@@ -23,6 +24,15 @@ Implementamos uma trava de segurança no `app.py`:
 1.  **Cadastro**: Novos usuários são criados com `ativo=False`.
 2.  **Login**: Bloqueia o acesso caso `ativo` seja falso, exibindo mensagem de espera.
 3.  **Aprovação**: Deve ser feita manualmente no banco de dados (via `psql` ou ferramenta gráfica) alterando a coluna `ativo` para `true`.
+
+---
+
+## 3. Controle Granular de Responsabilidade
+
+Implementamos uma lógica de permissão por item:
+1. **Atribuição**: No cadastro de modelos, o RH define item a item quem é o responsável pela validação (RH ou Administrativo).
+2. **Visibilidade**: O usuário com cargo "Administrativo" visualiza apenas os itens atribuídos a ele, evitando exposição de dados sensíveis (ex: benefícios).
+3. **Segurança**: O backend valida se o usuário tem permissão para alterar o status de um item específico durante o salvamento.
 
 ---
 
@@ -49,9 +59,11 @@ Se não estiver usando um banco gerenciado, configure localmente:
 ```bash
 sudo -u postgres psql
 # No prompt do PSQL:
-CREATE DATABASE checklist_db;
+CREATE DATABASE rh_db;
 CREATE USER checklist_user WITH PASSWORD 'sua_senha_forte';
-GRANT ALL PRIVILEGES ON DATABASE checklist_db TO checklist_user;
+GRANT ALL PRIVILEGES ON DATABASE rh_db TO checklist_user;
+-- Caso a tabela já exista, execute para atualizar a estrutura:
+-- ALTER TABLE checklist_modelos ADD COLUMN responsavel VARCHAR(50) DEFAULT 'RH';
 \q
 ```
 

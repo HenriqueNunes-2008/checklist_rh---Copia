@@ -87,6 +87,10 @@
                     <div id="container-itens" style="margin-top: 20px;">
                         <div class="item-input-row">
                             <input type="text" name="descricao[]" placeholder="Descrição do item" required style="flex: 1;">
+                            <select name="responsavel[]" style="width: 150px; border-radius: 8px; border: 1px solid #cbd5e1;">
+                                <option value="RH">RH</option>
+                                <option value="Administrativo">Administrativo</option>
+                            </select>
                             <button type="button" class="btn-remove" onclick="removerLinha(this)">✕</button>
                         </div>
                     </div>
@@ -191,16 +195,20 @@
         container.innerHTML = ''; // Limpa o formulário antes de carregar o modelo
 
         filtrados.forEach(item => {
-            adicionarLinha(item.descricao);
+            adicionarLinha(item.descricao, item.responsavel);
         });
     }
 
-    function adicionarLinha(valor = '') {
+    function adicionarLinha(valor = '', resp = 'RH') {
         const container = document.getElementById('container-itens');
         const div = document.createElement('div');
         div.className = 'item-input-row';
         div.innerHTML = `
-            <input type="text" name="descricao[]" value="${valor}" placeholder="Descrição do item" required>
+            <input type="text" name="descricao[]" value="${valor}" placeholder="Descrição do item" required style="flex: 1;">
+            <select name="responsavel[]" style="width: 150px; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;">
+                <option value="RH" ${resp === 'RH' ? 'selected' : ''}>RH</option>
+                <option value="Administrativo" ${resp === 'Administrativo' ? 'selected' : ''}>Administrativo</option>
+            </select>
             <button type="button" class="btn-remove" onclick="removerLinha(this)">✕</button>
         `;
         container.appendChild(div);
